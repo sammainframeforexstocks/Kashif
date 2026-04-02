@@ -1,0 +1,719 @@
+import React, { useMemo, useState } from "react";
+import { motion } from "framer-motion";
+import {
+  Search,
+  ShieldCheck,
+  ShieldAlert,
+  Building2,
+  Globe,
+  FileText,
+  MapPin,
+  BadgeCheck,
+  AlertTriangle,
+  Database,
+  Sparkles,
+  Link2,
+  Copy,
+  CheckCircle2,
+} from "lucide-react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
+
+const REGULATED_SERVICE_RULES = [
+  {
+    id: "lending",
+    label: "Lending / Credit Provision",
+    keywords: [
+      "loan",
+      "lending",
+      "credit",
+      "borrow",
+      "salary advance",
+      "buy now pay later",
+      "bnpl",
+      "financing",
+      "personal finance",
+      "cash advance",
+    ],
+    riskNote: "Website language suggests the entity may be offering credit or financing-related services.",
+  },
+  {
+    id: "payments",
+    label: "Payments / Money Services / Wallet",
+    keywords: [
+      "wallet",
+      "payments",
+      "payment gateway",
+      "transfer",
+      "send money",
+      "remittance",
+      "money transfer",
+      "stored value",
+      "card issuing",
+      "merchant acquiring",
+    ],
+    riskNote: "Website language suggests the entity may be offering payment, transfer, or wallet-related services.",
+  },
+  {
+    id: "investments",
+    label: "Investment / Brokerage / Advisory",
+    keywords: [
+      "invest",
+      "investment",
+      "portfolio",
+      "wealth",
+      "brokerage",
+      "securities",
+      "forex",
+      "trading",
+      "advisory",
+      "asset management",
+      "fund",
+      "crypto",
+      "virtual asset",
+    ],
+    riskNote: "Website language suggests the entity may be marketing investment, brokerage, or advisory activities.",
+  },
+  {
+    id: "insurance",
+    label: "Insurance / Insurance Distribution",
+    keywords: [
+      "insurance",
+      "policy",
+      "underwriting",
+      "broker insurance",
+      "insurtech",
+      "claim management",
+    ],
+    riskNote: "Website language suggests the entity may be involved in insurance-related activities.",
+  },
+];
+
+const JURISDICTION_RULES = [
+  { label: "DIFC", keywords: ["difc", "dubai international financial centre"] },
+  { label: "ADGM", keywords: ["adgm", "abu dhabi global market"] },
+  { label: "Dubai", keywords: ["dubai, uae", "dubai united arab emirates", "dubai uae"] },
+  { label: "Abu Dhabi", keywords: ["abu dhabi, uae", "abu dhabi united arab emirates"] },
+  { label: "Sharjah", keywords: ["sharjah, uae", "sharjah united arab emirates"] },
+  { label: "UAE (general)", keywords: ["uae", "united arab emirates"] },
+];
+
+const SAMPLE_DATABASE = {
+  companies: {
+    "wio bank": {
+      legalName: "Wio Bank PJSC",
+      website: "https://wio.io",
+      websiteText:
+        "Wio is a UAE digital banking platform offering business banking, personal banking, cards, transfers, savings, and other banking solutions from the UAE.",
+      locationText: "Abu Dhabi, UAE",
+      regulators: {
+        cbuae: {
+          found: true,
+          entityName: "Wio Bank PJSC",
+          status: "Licensed",
+          licenceRef: "Sample-001",
+          permittedServices: ["Banking services", "Accounts", "Transfers", "Cards"],
+          source: "CBUAE register",
+        },
+        dfsa: { found: false },
+        adgmFsra: { found: false },
+      },
+    },
+    "sarwa": {
+      legalName: "Sarwa Digital Wealth (Capital) Limited",
+      website: "https://www.sarwa.co",
+      websiteText:
+        "Sarwa offers investing, automated portfolios, stocks, retirement planning, and personal finance tools for users in the UAE.",
+      locationText: "ADGM, Abu Dhabi, UAE",
+      regulators: {
+        cbuae: { found: false },
+        dfsa: { found: false },
+        adgmFsra: {
+          found: true,
+          entityName: "Sarwa Digital Wealth (Capital) Limited",
+          status: "Authorised",
+          licenceRef: "Sample-ADGM-014",
+          permittedServices: ["Arranging deals", "Advisory-related permissions", "Investment platform services"],
+          source: "ADGM FSRA public register",
+        },
+      },
+    },
+    "sample fintech": {
+      legalName: "Sample Fintech LLC",
+      website: "https://sample-fintech.ae",
+      websiteText:
+        "Sample Fintech provides instant salary advances, wallet services, and quick consumer loans through its mobile app in the UAE.",
+      locationText: "Dubai, UAE",
+      regulators: {
+        cbuae: { found: false },
+        dfsa: { found: false },
+        adgmFsra: { found: false },
+      },
+    },
+  },
+};
+
+function normalize(text) {
+  return (text || "").toLowerCase().trim();
+}
+
+function titleCase(text) {
+  return text
+    .split(" ")
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
+function detectServices(text) {
+  const haystack = normalize(text);
+  const matches = [];
+
+  for (const rule of REGULATED_SERVICE_RULES) {
+    const hitKeywords = rule.keywords.filter((k) => haystack.includes(k));
+    if (hitKeywords.length) {
+      matches.push({
+        id: rule.id,
+        label: rule.label,
+        keywords: hitKeywords,
+        riskNote: rule.riskNote,
+      });
+    }
+  }
+
+  return matches;
+}
+
+function detectLocation(text) {
+  const haystack = normalize(text);
+  const found = [];
+
+  for (const rule of JURISDICTION_RULES) {
+    if (rule.keywords.some((k) => haystack.includes(k))) {
+      found.push(rule.label);
+    }
+  }
+
+  return [...new Set(found)];
+}
+
+function deriveAssessment({ services, regulators }) {
+  const anyRegulatorFound = [regulators.cbuae, regulators.dfsa, regulators.adgmFsra].some((r) => r?.found);
+
+  if (anyRegulatorFound && services.length === 0) {
+    return {
+      tone: "neutral",
+      label: "Licensed entity found; website service classification unclear",
+      summary:
+        "A regulator match was identified, but the current website text does not clearly map to a regulated activity category in the screening logic.",
+    };
+  }
+
+  if (anyRegulatorFound && services.length > 0) {
+    return {
+      tone: "positive",
+      label: "Potentially licensed and broadly aligned",
+      summary:
+        "A regulator match was identified and the website appears to market financial services. Manual review is still recommended to confirm that website offerings do not exceed the visible permitted scope.",
+    };
+  }
+
+  if (!anyRegulatorFound && services.length > 0) {
+    return {
+      tone: "warning",
+      label: "Potential unlicensed activity",
+      summary:
+        "The website appears to market regulated financial services, but no corresponding licence or authorisation was identified in the checked regulator registers.",
+    };
+  }
+
+  return {
+    tone: "neutral",
+    label: "No confirmed regulator match; insufficient regulated-service indicators",
+    summary:
+      "No regulator match was identified, and the website text does not currently contain strong enough keywords to classify a regulated financial activity with confidence.",
+  };
+}
+
+function generateObservation({ companyName, services, regulators, website, locationText }) {
+  const anyRegulatorFound = [regulators.cbuae, regulators.dfsa, regulators.adgmFsra].some((r) => r?.found);
+  const serviceLabel = services.map((s) => s.label).join("; ") || "regulated financial services";
+  const locationPart = locationText ? ` The website also indicates a UAE presence or operating base in ${locationText}.` : "";
+
+  if (!anyRegulatorFound && services.length > 0) {
+    return `Based on the website information reviewed for ${companyName}, the company appears to offer ${serviceLabel}. A search of the checked public financial regulator registers did not identify a corresponding licence or authorisation for the entity under the Central Bank of the UAE (CBUAE), Dubai Financial Services Authority (DFSA), or Abu Dhabi Global Market Financial Services Regulatory Authority (ADGM FSRA).${locationPart} Accordingly, the company appears to market or provide a regulated financial service without a clearly identifiable valid licence in the checked registers, and the matter should be subject to further regulatory verification.\n\nThis observation is based on publicly available information reviewed as part of preliminary screening and does not constitute a final regulatory or legal determination.`;
+  }
+
+  const foundRegulators = [
+    regulators.cbuae?.found ? "CBUAE" : null,
+    regulators.dfsa?.found ? "DFSA" : null,
+    regulators.adgmFsra?.found ? "ADGM FSRA" : null,
+  ]
+    .filter(Boolean)
+    .join(", ");
+
+  return `A corresponding regulator match was identified for ${companyName} in the following checked register(s): ${foundRegulators || "N/A"}. The website appears to market ${serviceLabel}. Manual review is recommended to confirm whether the website offering is fully aligned with the visible licensed or authorised scope and the specific legal entity holding the permission.\n\nThis observation is based on publicly available information reviewed as part of preliminary screening and does not constitute a final regulatory or legal determination.`;
+}
+
+function toneClasses(tone) {
+  if (tone === "positive") {
+    return "bg-emerald-50 text-emerald-700 border-emerald-200";
+  }
+  if (tone === "warning") {
+    return "bg-amber-50 text-amber-700 border-amber-200";
+  }
+  return "bg-slate-50 text-slate-700 border-slate-200";
+}
+
+function StatusBadge({ found }) {
+  return found ? (
+    <Badge className="rounded-full bg-emerald-100 text-emerald-700 hover:bg-emerald-100 border border-emerald-200">
+      <BadgeCheck className="mr-1 h-3.5 w-3.5" /> Found
+    </Badge>
+  ) : (
+    <Badge className="rounded-full bg-slate-100 text-slate-700 hover:bg-slate-100 border border-slate-200">
+      <AlertTriangle className="mr-1 h-3.5 w-3.5" /> Not Found
+    </Badge>
+  );
+}
+
+function RegulatorCard({ title, data }) {
+  return (
+    <Card className="rounded-2xl shadow-sm border-slate-200">
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between gap-3">
+          <CardTitle className="text-base">{title}</CardTitle>
+          <StatusBadge found={!!data?.found} />
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3 text-sm text-slate-700">
+        {data?.found ? (
+          <>
+            <div>
+              <div className="text-slate-500">Matched Entity</div>
+              <div className="font-medium">{data.entityName}</div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <div className="text-slate-500">Status</div>
+                <div className="font-medium">{data.status}</div>
+              </div>
+              <div>
+                <div className="text-slate-500">Reference</div>
+                <div className="font-medium">{data.licenceRef}</div>
+              </div>
+            </div>
+            <div>
+              <div className="text-slate-500 mb-1">Visible Permitted Services</div>
+              <div className="flex flex-wrap gap-2">
+                {(data.permittedServices || []).map((service) => (
+                  <Badge key={service} variant="outline" className="rounded-full text-xs">
+                    {service}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+            <div>
+              <div className="text-slate-500">Source</div>
+              <div className="font-medium">{data.source}</div>
+            </div>
+          </>
+        ) : (
+          <div className="text-slate-600">
+            No corresponding entity was identified in this checked register using the current search logic.
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+export default function UAEFinancialLicenceScreeningTool() {
+  const [companyQuery, setCompanyQuery] = useState("");
+  const [websiteText, setWebsiteText] = useState("");
+  const [websiteUrl, setWebsiteUrl] = useState("");
+  const [locationText, setLocationText] = useState("");
+  const [copied, setCopied] = useState(false);
+
+  const sampleMatch = useMemo(() => {
+    const q = normalize(companyQuery);
+    return SAMPLE_DATABASE.companies[q] || null;
+  }, [companyQuery]);
+
+  const effectiveWebsiteText = sampleMatch?.websiteText || websiteText;
+  const effectiveWebsiteUrl = sampleMatch?.website || websiteUrl;
+  const effectiveLocationText = sampleMatch?.locationText || locationText;
+
+  const services = useMemo(() => detectServices(`${effectiveWebsiteText} ${effectiveLocationText}`), [effectiveWebsiteText, effectiveLocationText]);
+  const baseLocations = useMemo(() => detectLocation(`${effectiveWebsiteText} ${effectiveLocationText}`), [effectiveWebsiteText, effectiveLocationText]);
+
+  const regulators = sampleMatch?.regulators || {
+    cbuae: { found: false },
+    dfsa: { found: false },
+    adgmFsra: { found: false },
+  };
+
+  const assessment = useMemo(() => deriveAssessment({ services, regulators }), [services, regulators]);
+
+  const observation = useMemo(
+    () =>
+      generateObservation({
+        companyName: sampleMatch?.legalName || titleCase(companyQuery || "Target Company"),
+        services,
+        regulators,
+        website: effectiveWebsiteUrl,
+        locationText: effectiveLocationText || baseLocations.join(", "),
+      }),
+    [sampleMatch, companyQuery, services, regulators, effectiveWebsiteUrl, effectiveLocationText, baseLocations]
+  );
+
+  const foundServicePermissions = [regulators.cbuae, regulators.dfsa, regulators.adgmFsra]
+    .filter((r) => r?.found)
+    .flatMap((r) => r.permittedServices || []);
+
+  async function copyObservation() {
+    try {
+      await navigator.clipboard.writeText(observation);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    } catch (e) {
+      setCopied(false);
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-50 p-4 md:p-8">
+      <div className="mx-auto max-w-7xl space-y-6">
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.35 }}
+          className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]"
+        >
+          <Card className="rounded-[28px] shadow-sm border-slate-200 overflow-hidden">
+            <div className="bg-white p-6 md:p-8">
+              <div className="flex flex-wrap items-center gap-3 mb-4">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100">
+                  <ShieldCheck className="h-6 w-6 text-slate-700" />
+                </div>
+                <div>
+                  <h1 className="text-2xl md:text-3xl font-semibold tracking-tight text-slate-900">
+                    UAE Financial Licence Screening Tool
+                  </h1>
+                  <p className="text-sm md:text-base text-slate-600 mt-1 max-w-3xl">
+                    Screen a UAE financial-services entity against website claims, detected services, jurisdiction signals,
+                    and checked regulator matches across CBUAE, DFSA, and ADGM FSRA.
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="md:col-span-2">
+                  <label className="text-sm font-medium text-slate-700 mb-2 block">Company Search</label>
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                    <Input
+                      value={companyQuery}
+                      onChange={(e) => setCompanyQuery(e.target.value)}
+                      placeholder="Search a UAE financial institution or fintech"
+                      className="pl-10 h-12 rounded-2xl"
+                    />
+                  </div>
+                  <div className="mt-2 text-xs text-slate-500">
+                    Try sample searches: <span className="font-medium">Wio Bank</span>, <span className="font-medium">Sarwa</span>, or <span className="font-medium">Sample Fintech</span>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium text-slate-700 mb-2 block">Website URL</label>
+                  <Input
+                    value={effectiveWebsiteUrl}
+                    onChange={(e) => setWebsiteUrl(e.target.value)}
+                    placeholder="https://company.ae"
+                    className="h-12 rounded-2xl"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium text-slate-700 mb-2 block">Claimed Location / Address Text</label>
+                  <Input
+                    value={effectiveLocationText}
+                    onChange={(e) => setLocationText(e.target.value)}
+                    placeholder="Dubai, UAE / DIFC / ADGM"
+                    className="h-12 rounded-2xl"
+                  />
+                </div>
+
+                <div className="md:col-span-2">
+                  <label className="text-sm font-medium text-slate-700 mb-2 block">Website Text / Product Description</label>
+                  <Textarea
+                    value={effectiveWebsiteText}
+                    onChange={(e) => setWebsiteText(e.target.value)}
+                    placeholder="Paste website copy, about us text, app description, service description, or legal disclaimer text here"
+                    className="min-h-[150px] rounded-2xl"
+                  />
+                </div>
+              </div>
+            </div>
+          </Card>
+
+          <Card className="rounded-[28px] shadow-sm border-slate-200 bg-white">
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-lg">
+                <Sparkles className="h-5 w-5" /> Screening Outcome
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className={`rounded-2xl border p-4 ${toneClasses(assessment.tone)}`}>
+                <div className="flex items-start gap-3">
+                  {assessment.tone === "warning" ? (
+                    <ShieldAlert className="h-5 w-5 mt-0.5" />
+                  ) : (
+                    <CheckCircle2 className="h-5 w-5 mt-0.5" />
+                  )}
+                  <div>
+                    <div className="font-semibold">{assessment.label}</div>
+                    <div className="text-sm mt-1 leading-6">{assessment.summary}</div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid gap-3">
+                <div className="rounded-2xl border border-slate-200 p-4">
+                  <div className="text-xs uppercase tracking-wide text-slate-500 mb-1">Detected Services</div>
+                  <div className="flex flex-wrap gap-2">
+                    {services.length ? (
+                      services.map((s) => (
+                        <Badge key={s.id} variant="outline" className="rounded-full">
+                          {s.label}
+                        </Badge>
+                      ))
+                    ) : (
+                      <span className="text-sm text-slate-500">No regulated-service bucket detected yet.</span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-slate-200 p-4">
+                  <div className="text-xs uppercase tracking-wide text-slate-500 mb-1">Detected Location Signals</div>
+                  <div className="flex flex-wrap gap-2">
+                    {baseLocations.length ? (
+                      baseLocations.map((loc) => (
+                        <Badge key={loc} variant="outline" className="rounded-full">
+                          {loc}
+                        </Badge>
+                      ))
+                    ) : (
+                      <span className="text-sm text-slate-500">No clear jurisdiction signal detected from current text.</span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-slate-200 p-4">
+                  <div className="text-xs uppercase tracking-wide text-slate-500 mb-1">Visible Licensed Scope</div>
+                  <div className="flex flex-wrap gap-2">
+                    {foundServicePermissions.length ? (
+                      foundServicePermissions.map((svc, idx) => (
+                        <Badge key={`${svc}-${idx}`} variant="outline" className="rounded-full">
+                          {svc}
+                        </Badge>
+                      ))
+                    ) : (
+                      <span className="text-sm text-slate-500">No visible licensed permissions because no regulator match is currently loaded.</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </motion.div>
+
+        <Tabs defaultValue="results" className="space-y-4">
+          <TabsList className="rounded-2xl bg-white border border-slate-200 p-1 h-auto flex flex-wrap">
+            <TabsTrigger value="results" className="rounded-xl">Results</TabsTrigger>
+            <TabsTrigger value="observation" className="rounded-xl">Observation</TabsTrigger>
+            <TabsTrigger value="logic" className="rounded-xl">Decision Logic</TabsTrigger>
+            <TabsTrigger value="integration" className="rounded-xl">Integration Notes</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="results" className="space-y-6">
+            <div className="grid gap-6 lg:grid-cols-3">
+              <Card className="rounded-2xl border-slate-200 shadow-sm lg:col-span-1">
+                <CardHeader>
+                  <CardTitle className="text-lg">Company Snapshot</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4 text-sm text-slate-700">
+                  <div className="flex items-start gap-3">
+                    <Building2 className="h-4 w-4 mt-1 text-slate-500" />
+                    <div>
+                      <div className="text-slate-500">Entity</div>
+                      <div className="font-medium">{sampleMatch?.legalName || titleCase(companyQuery || "Target Company")}</div>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-3">
+                    <Globe className="h-4 w-4 mt-1 text-slate-500" />
+                    <div>
+                      <div className="text-slate-500">Website</div>
+                      <div className="font-medium break-all">{effectiveWebsiteUrl || "Not provided"}</div>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-3">
+                    <MapPin className="h-4 w-4 mt-1 text-slate-500" />
+                    <div>
+                      <div className="text-slate-500">Claimed Base / Location</div>
+                      <div className="font-medium">{effectiveLocationText || (baseLocations.length ? baseLocations.join(", ") : "Not clearly identified")}</div>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-3">
+                    <FileText className="h-4 w-4 mt-1 text-slate-500" />
+                    <div>
+                      <div className="text-slate-500">Website-Inferred Offering</div>
+                      <div className="font-medium">
+                        {services.length ? services.map((s) => s.label).join("; ") : "No regulated-service bucket detected from current text"}
+                      </div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <div className="lg:col-span-2 grid gap-6 md:grid-cols-3">
+                <RegulatorCard title="CBUAE" data={regulators.cbuae} />
+                <RegulatorCard title="DFSA" data={regulators.dfsa} />
+                <RegulatorCard title="ADGM FSRA" data={regulators.adgmFsra} />
+              </div>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="observation">
+            <Card className="rounded-2xl border-slate-200 shadow-sm">
+              <CardHeader>
+                <div className="flex items-center justify-between gap-4 flex-wrap">
+                  <CardTitle className="text-lg">Automated Observation Draft</CardTitle>
+                  <Button onClick={copyObservation} className="rounded-2xl">
+                    <Copy className="h-4 w-4 mr-2" /> {copied ? "Copied" : "Copy Observation"}
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="rounded-2xl bg-slate-50 border border-slate-200 p-5 text-sm leading-7 text-slate-800 whitespace-pre-wrap">
+                  {observation}
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="logic">
+            <div className="grid gap-6 lg:grid-cols-2">
+              <Card className="rounded-2xl border-slate-200 shadow-sm">
+                <CardHeader>
+                  <CardTitle className="text-lg">Current Screening Rules</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-5">
+                  {REGULATED_SERVICE_RULES.map((rule) => (
+                    <div key={rule.id}>
+                      <div className="font-medium text-slate-900">{rule.label}</div>
+                      <div className="text-sm text-slate-600 mt-1">{rule.riskNote}</div>
+                      <div className="flex flex-wrap gap-2 mt-3">
+                        {rule.keywords.map((keyword) => (
+                          <Badge key={keyword} variant="outline" className="rounded-full text-xs">
+                            {keyword}
+                          </Badge>
+                        ))}
+                      </div>
+                      <Separator className="mt-5" />
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+
+              <Card className="rounded-2xl border-slate-200 shadow-sm">
+                <CardHeader>
+                  <CardTitle className="text-lg">Decision Output Structure</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4 text-sm text-slate-700 leading-7">
+                  <div className="rounded-2xl border border-slate-200 p-4">
+                    <div className="font-medium text-slate-900">1. Website Service Detection</div>
+                    <div>Maps website text into regulated service buckets such as lending, payments, investments, and insurance.</div>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200 p-4">
+                    <div className="font-medium text-slate-900">2. Jurisdiction Signal Detection</div>
+                    <div>Identifies references to DIFC, ADGM, Dubai, Abu Dhabi, Sharjah, and UAE-based operating presence.</div>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200 p-4">
+                    <div className="font-medium text-slate-900">3. Register Match Review</div>
+                    <div>Checks whether the entity appears in the reviewed financial regulator register sources and surfaces visible permitted services where found.</div>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200 p-4">
+                    <div className="font-medium text-slate-900">4. Observation Generation</div>
+                    <div>Produces a structured, regulator-safe draft observation that avoids making an absolute legal determination while still clearly flagging potential unlicensed activity.</div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </TabsContent>
+
+          <TabsContent value="integration">
+            <div className="grid gap-6 lg:grid-cols-2">
+              <Card className="rounded-2xl border-slate-200 shadow-sm">
+                <CardHeader>
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <Database className="h-5 w-5" /> Data Connectors To Plug In
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4 text-sm text-slate-700 leading-7">
+                  <div className="rounded-2xl border border-slate-200 p-4">
+                    <div className="font-medium text-slate-900">Website Crawl / Text Extraction</div>
+                    <div>Pull About Us, Products, FAQ, Terms, footer, contact pages, and app descriptions. Store extracted text for service classification.</div>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200 p-4">
+                    <div className="font-medium text-slate-900">CBUAE Register Connector</div>
+                    <div>Search official register datasets by entity name, trade name, and licence number. Map results into status, category, and visible permitted scope.</div>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200 p-4">
+                    <div className="font-medium text-slate-900">DFSA Public Register Connector</div>
+                    <div>Use the DIFC financial-services regulator register for firm authorisation checks and visible financial services permissions.</div>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200 p-4">
+                    <div className="font-medium text-slate-900">ADGM FSRA Public Register Connector</div>
+                    <div>Check whether the entity appears on the ADGM FSRA register and capture visible authorised activity descriptions.</div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className="rounded-2xl border-slate-200 shadow-sm">
+                <CardHeader>
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <Link2 className="h-5 w-5" /> Build Notes For Production
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4 text-sm text-slate-700 leading-7">
+                  <div className="rounded-2xl border border-slate-200 p-4">
+                    <div className="font-medium text-slate-900">Entity Matching</div>
+                    <div>Use fuzzy matching across legal names, trade names, abbreviations, and Arabic/English variants to reduce false negatives.</div>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200 p-4">
+                    <div className="font-medium text-slate-900">Observation Controls</div>
+                    <div>Keep observation language calibrated: “appears to offer,” “could not verify,” and “requires further review” unless a legal analyst confirms more.</div>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200 p-4">
+                    <div className="font-medium text-slate-900">Evidence Pack</div>
+                    <div>Store screenshots, source URLs, crawl date, extracted text snippets, and register search results to make the screening audit-ready.</div>
+                  </div>
+                  <div className="rounded-2xl border border-slate-200 p-4">
+                    <div className="font-medium text-slate-900">Next Enhancement</div>
+                    <div>Compare “website-claimed services” against “verified licensed services” and flag possible overreach, entity mismatch, or misleading regulatory claims.</div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </TabsContent>
+        </Tabs>
+      </div>
+    </div>
+  );
+}
